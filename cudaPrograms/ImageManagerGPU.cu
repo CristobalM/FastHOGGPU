@@ -9,6 +9,7 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
+
 // KERNELS
 __global__ void kConvertMatFromUcharToUchar4(uchar *data, uchar4 *result, int step, int channels) {
   int row = blockIdx.x;
@@ -87,9 +88,6 @@ ImageManagerGPU::ImageManagerGPU(cv::Mat& imageBGRA) {
   padding = 3;
   paddedWidth = cols + padding*2;
   paddedHeight = rows + padding*2;
-
-
-
 }
 
 __host__ void ImageManagerGPU::convertMatFromUcharToUchar4(uchar* data, uchar4** dResult,
@@ -127,9 +125,6 @@ ImageManagerGPU::~ImageManagerGPU() {
 
 }
 
-
-
-
 int ImageManagerGPU::getCols() {
   return cols;
 }
@@ -140,33 +135,6 @@ int ImageManagerGPU::getRows() {
 
 int ImageManagerGPU::getChannels() {
   return channels;
-}
-
-__host__ void ImageManagerGPU::initAllocate(){
-  gpuErrchk(cudaMalloc((void**)&dImagePaddedF4, sizeof(float4) * paddedWidth * paddedHeight));
-}
-
-__host__ void ImageManagerGPU::initPadding(){
-  gpuErrchk(cudaMalloc((void**)&dImagePaddedU4, sizeof(uchar4) * paddedWidth * paddedHeight));
-}
-
-__host__ void ImageManagerGPU::padStoredDeviceImage() {
-
-  int paddedWidth = cols + padding*2;
-  int paddedHeight = rows + padding*2;
-
-  gpuErrchk(cudaMemset(dImagePaddedU4, 0, sizeof(uchar4) * paddedWidth * paddedHeight));
-  /*
-  gpuErrchk(cudaMemcpy2D(dImagePaddedU4 + padding + padding*paddedWidth,
-          paddedWidth * sizeof(uchar4), dResult,
-          cols * sizeof(uchar4), rows * sizeof(uchar4),
-          rows, cudaMemcpyDeviceToDevice
-          ));
-  */
-  gpuErrchk(cudaMemcpy(dImagePaddedU4 + padding + padding * paddedWidth, ))
-
-  ConvertUchar4ToFloat(dImagePaddedU4, dImagePaddedF4, paddedWidth, paddedHeight);
-
 }
 
 __host__ inline int ceilDiv(int a, int b){
@@ -196,21 +164,5 @@ std::unique_ptr<uchar4> ImageManagerGPU::getUchar4Image() { // debug
   gpuErrchk(cudaMemcpy(hostImage.get(), dResult, sizeof(uchar4) * rows * cols, cudaMemcpyDeviceToHost));
 
   return hostImage;
-}
-
-void ImageManagerGPU::padImage() {
-  initAllocate();
-  initPadding();
-  padStoredDeviceImage();
-}
-
-std::unique_ptr<uchar4> ImageManagerGPU::debugPadding(){
-  padImage();
-  std::unique_ptr<uchar4> result(new uchar4[paddedWidth * paddedHeight]);
-
-  ConvertFloat4ToUchar(dImagePaddedF4, dImagePaddedU4, paddedWidth, paddedHeight);
-  gpuErrchk(cudaMemcpy(result.get(), dImagePaddedU4, sizeof(uchar4) * paddedWidth * paddedHeight, cudaMemcpyDeviceToHost));
-
-  return result;
 }
 

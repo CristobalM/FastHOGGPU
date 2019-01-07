@@ -12,8 +12,8 @@ void ImageHandler::readImageFromFile(const std::string& filename) {
   image = std::make_unique<cv::Mat>(std::move(bgra));
 }
 
-cv::Mat& ImageHandler::getImage() {
-  return *image;
+cv::Mat* ImageHandler::getImage() {
+  return image.get();
 }
 
 ImageHandler::ImageHandler(const std::string& filename) {

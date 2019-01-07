@@ -12,3 +12,4 @@ set(CMAKE_COLOR_MAKEFILE   ON)
 
 add_subdirectory(cudaPrograms)
 add_subdirectory(hostGPP)
+add_subdirectory(SequentialHOG)

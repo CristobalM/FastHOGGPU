@@ -23,7 +23,6 @@ public:
   virtual int getChannels() = 0;
   virtual uchar4* getUchar4DeviceImage() = 0;
   virtual std::unique_ptr<uchar4> getUchar4Image() = 0;
-  virtual void padImage() = 0;
-  virtual std::unique_ptr<uchar4> debugPadding() = 0;
+
 };
 #endif //PROJECT_IIMAGEMANAGERGPU_H

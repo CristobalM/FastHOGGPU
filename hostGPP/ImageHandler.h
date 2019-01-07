@@ -17,7 +17,7 @@ public:
   explicit ImageHandler(const std::string& filename);
 
   void readImageFromFile(const std::string& filename);
-  cv::Mat &getImage();
+  cv::Mat* getImage();
 
 };
 

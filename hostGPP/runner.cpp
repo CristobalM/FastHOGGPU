@@ -16,12 +16,11 @@ int main(int argc, char **argv){
   ImageHandler handler("hola.png");
   //loadSVMWeights(PERSON_WEIGHT_VEC, (size_t) PERSON_WEIGHT_VEC_LENGTH);
   auto isvmManagerGPU = loadSVMWeights(PERSON_WEIGHT_VEC, (size_t) PERSON_WEIGHT_VEC_LENGTH);
-  auto imageManager = loadImageToGPU(handler.getImage());
+  auto imageManager = loadImageToGPU(*handler.getImage());
   //std::this_thread::sleep_for(std::chrono::seconds(5));
   std::cout << isvmManagerGPU->getWeightsArraySize() << std::endl;
 
-  //auto uchar4Mat_ = imageManager->getUchar4Image();
-  auto uchar4Mat_ = imageManager->debugPadding();
+  auto uchar4Mat_ = imageManager->getUchar4Image();
   auto* uchar4Mat = uchar4Mat_.get();
   auto cols = imageManager->getCols();
   auto rows = imageManager->getRows();
@@ -44,7 +43,7 @@ int main(int argc, char **argv){
   }
 
 
-  cv::imshow("The window", handler.getImage());
+  cv::imshow("The window", *handler.getImage());
   cv::imshow("The window2", toshow);
   cv::waitKey(0);
   //cv::imshow("The window", handler.getImage());
