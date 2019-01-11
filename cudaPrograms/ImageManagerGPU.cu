@@ -196,6 +196,8 @@ __global__ void kComputeBlockHistogram(float* magnitude, float* angle, float* hi
         int width, int height, int blockSize, int blocksDimX, int blocksDimY, int cellSize, int blockStride){
 
   int idx = threadIdx.x + blockIdx.x*blockDim.x;
+  if(idx >= blocksDimX * blocksDimY)
+    return;
 
   int blockX = idx%blocksDimX;
   int blockY = idx/blocksDimX;
@@ -373,6 +375,12 @@ __global__ void kComputeBlockHistogram(float* magnitude, float* angle, float* hi
   }
 }
 
+__global__ void kEvalSVM(float* histograms, float* svmScores){
+  int idx = threadIdx.x + blockIdx.x*blockDim.x; // idx of detection window
+
+  
+}
+
 // ImageManagerGPU
 
 ImageManagerGPU::ImageManagerGPU(cv::Mat& imageBGR) {
@@ -391,6 +399,7 @@ ImageManagerGPU::ImageManagerGPU(cv::Mat& imageBGR) {
   dImagePaddedF3 = nullptr;
   dImagePaddedU3 = nullptr;
 }
+
 
 __host__ void ImageManagerGPU::convertMatFromUcharToUchar3(uchar* data, uchar3** dResult,
                                                            int cols, int rows, int channels, int step) {
@@ -412,7 +421,7 @@ __host__ void ImageManagerGPU::convertMatFromUcharToUchar3(uchar* data, uchar3**
   int height = rows;
 
   std::cout << "image rows = " << rows << ", cols=" << cols << std::endl;
-  const int threadsByBlock = 1024;
+  const int threadsByBlock = 32;
   double b = (width*height)/((double)threadsByBlock);
   int b_int = (int)std::ceil(b);
   kConvertMatFromUcharToUchar3 <<<b_int, threadsByBlock>>> (dInput, *dResult, step, this->channels, width, height);
@@ -641,12 +650,35 @@ void ImageManagerGPU::debugGradient() {
   cv::imwrite("cvAngles.png", cvAngles);
 
 
+  int blockNum = calcContainedWithStride(paddedWidth, paddedHeight, BLOCK_WIDTH, BLOCK_HEIGHT, CELL_WIDTH, CELL_HEIGHT);
+  int allHistogramsSize = 36 * blockNum;
+  std::unique_ptr<float> hHistograms(new float[allHistogramsSize]);
+  float* dHistograms;
+
+  const int blocksDimX = ((paddedWidth - BLOCK_WIDTH)/CELL_WIDTH) + 1;
+  const int blocksDimY = ((paddedHeight - BLOCK_HEIGHT)/CELL_HEIGHT) + 1;
+
+  gpuErrchk(cudaMalloc(&dHistograms, sizeof(float) * allHistogramsSize));
+
+  ComputeBlockHistogram(dMagnitudes, dAngles, dHistograms, paddedWidth, paddedHeight,
+          BLOCK_WIDTH, blocksDimX, blocksDimY, CELL_WIDTH, CELL_WIDTH);
+
+  cudaDeviceSynchronize();
+
+  std::cout << "Done ComputeBlockHistogram. allHistogramsSize=" << allHistogramsSize << std::endl;
+
+  gpuErrchk(cudaMemcpy(hHistograms.get(), dHistograms, sizeof(float) * allHistogramsSize, cudaMemcpyDeviceToHost));
+
+  for(int i = 0; i < 10; i++)
+    std::cout << hHistograms.get()[i] << "  ";
+  std::cout << std::endl;
 
 
-  gpuErrchk(cudaFree(dGradX))
-  gpuErrchk(cudaFree(dGradY))
-  gpuErrchk(cudaFree(dMagnitudes))
-  gpuErrchk(cudaFree(dAngles))
+  gpuErrchk(cudaFree(dGradX));
+  gpuErrchk(cudaFree(dGradY));
+  gpuErrchk(cudaFree(dMagnitudes));
+  gpuErrchk(cudaFree(dAngles));
+  gpuErrchk(cudaFree(dHistograms));
 
 
 }
@@ -682,5 +714,17 @@ __host__ void ImageManagerGPU::convertDResultToFloat3() {
 
 int ImageManagerGPU::getDetectionHistogramSize() {
   return DETECTION_WINDOW_HISTOGRAM_SIZE;
+}
+
+void ImageManagerGPU::ComputeBlockHistogram(float* magnitude, float* angle, float* histogram, int width, int height,
+                                            int blockSize, int blocksDimX, int blocksDimY, int cellSize,
+                                            int blockStride) {
+  const int threadsByBlock = 32;
+  double b = (width*height)/((double)threadsByBlock);
+  int b_int = (int)std::ceil(b);
+
+  kComputeBlockHistogram<<< b_int, threadsByBlock >>>(magnitude, angle, histogram,
+          width, height, blockSize, blocksDimX, blocksDimY, cellSize, blockStride);
+
 }
 

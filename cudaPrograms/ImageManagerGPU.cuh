@@ -48,6 +48,9 @@ public:
   __host__ void computeMagnitudeAndAngles(float3* gradX, float3* gradY, float* magnitude,
                                                   float* angle, int width, int height);
 
+  __host__ void ComputeBlockHistogram(float* magnitude, float* angle, float* histogram,
+                                         int width, int height, int blockSize, int blocksDimX, int blocksDimY, int cellSize, int blockStride);
+
   uchar3* getUchar3DeviceImage() override;
 
   std::unique_ptr<float3> getFloat3Image();
