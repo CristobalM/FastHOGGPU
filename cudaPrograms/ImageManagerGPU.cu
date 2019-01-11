@@ -473,7 +473,7 @@ __host__ void ImageManagerGPU::convertMatFromUcharToUchar3(uchar* data, uchar3**
   int width = cols;
   int height = rows;
 
-  std::cout << "image rows = " << rows << ", cols=" << cols << std::endl;
+  //std::cout << "image rows = " << rows << ", cols=" << cols << std::endl;
   const int threadsByBlock = 32;
   double b = (width*height)/((double)threadsByBlock);
   int b_int = (int)std::ceil(b);
@@ -515,7 +515,7 @@ __host__ void ImageManagerGPU::ConvertUchar3ToFloat(uchar3* dInputU3, float3* dO
   const int threadsByBlock = 32;
   double b = (width*height)/((double)threadsByBlock);
   int b_int = (int)std::ceil(b);
-  std::cout << "ConvertUchar3ToFloat:: blocks = " << b_int << " threadsByBlock = " << threadsByBlock << std::endl;
+  //std::cout << "ConvertUchar3ToFloat:: blocks = " << b_int << " threadsByBlock = " << threadsByBlock << std::endl;
   kConvertU3ToFloat <<< b_int, threadsByBlock >>>(dInputU3, dOutputF3, width, height);
   gpuErrchk( cudaPeekAtLastError() );
   gpuErrchk( cudaDeviceSynchronize() );
@@ -550,15 +550,15 @@ void ImageManagerGPU::computeGradient(float3* dInputF3, float3* dOutputGradX, fl
   int b_int = (int)std::ceil(b);
   //dim3 threadsInblock(threadsByBlock);
   //dim3 blocks(b_int);
-  std::cout << "computeGradient:: blocks = " << b_int << " threadsPerBlock = " << threadsByBlock << std::endl;
-  std::cout << "width=" << width << ", height=" << height << std::endl;
+  //std::cout << "computeGradient:: blocks = " << b_int << " threadsPerBlock = " << threadsByBlock << std::endl;
+  //std::cout << "width=" << width << ", height=" << height << std::endl;
   //threadIdx.x + blockIdx.x*blockDim.x
-  int maxIdx = b_int*threadsByBlock;
-  std::cout << "max Idx = " << maxIdx << "; width*height = " << width * height << std::endl;
+  //int maxIdx = b_int*threadsByBlock;
+  //std::cout << "max Idx = " << maxIdx << "; width*height = " << width * height << std::endl;
   kComputeGradient<<< b_int, threadsByBlock >>>(dInputF3, dOutputGradX, dOutputGradY, width, height);
-  gpuErrchk( cudaPeekAtLastError() );
-  gpuErrchk( cudaDeviceSynchronize() );
-  std::cout << "hola" << std::endl;
+  //gpuErrchk( cudaPeekAtLastError() );
+  //gpuErrchk( cudaDeviceSynchronize() );
+  //std::cout << "hola" << std::endl;
 }
 
 __host__
@@ -567,7 +567,7 @@ void ImageManagerGPU::computeMagnitudeAndAngles(float3* gradX, float3* gradY, fl
   const int threadsByBlock = 32;
   double b = (width*height)/((double)threadsByBlock);
   int b_int = (int)std::ceil(b);
-  std::cout << "computeMagnitudeAndAngles:: blocks = " << b_int << " threadsPerBlock = " << threadsByBlock << std::endl;
+  //std::cout << "computeMagnitudeAndAngles:: blocks = " << b_int << " threadsPerBlock = " << threadsByBlock << std::endl;
   //kComputeMagnitudeAndAngle<<< b_int, threadsByBlock >>>(gradX, gradY, magnitude, angle,
   kComputeMagnitudeAndAngle<<< b_int, threadsByBlock >>>(gradX, gradY, magnitude, angle,
           width, height);
@@ -732,7 +732,7 @@ void ImageManagerGPU::debugGradient() {
 
   cudaDeviceSynchronize();
 
-  std::cout << "Done ComputeBlockHistogram. allHistogramsSize=" << allHistogramsSize << std::endl;
+  //std::cout << "Done ComputeBlockHistogram. allHistogramsSize=" << allHistogramsSize << std::endl;
 
   gpuErrchk(cudaMemcpy(hHistograms.get(), dHistograms, sizeof(float) * allHistogramsSize, cudaMemcpyDeviceToHost));
 
