@@ -5,7 +5,10 @@
 #include <cstddef>
 #include <memory>
 
+#include <opencv2/core/mat.hpp>
+#include <opencv2/imgproc.hpp>
 #include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
 
 #include "ISVMManagerGPU.h"
 #include "IImageManagerGPU.h"
