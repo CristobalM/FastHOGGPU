@@ -7,9 +7,8 @@
 
 void ImageHandler::readImageFromFile(const std::string& filename) {
   auto readImage = cv::imread(filename, 1);
-  cv::Mat bgra;
-  cv::cvtColor(readImage, bgra, CV_BGR2BGRA);
-  image = std::make_unique<cv::Mat>(std::move(bgra));
+  image = std::make_unique<cv::Mat>(std::move(readImage));
+;
 }
 
 cv::Mat* ImageHandler::getImage() {
@@ -18,4 +17,15 @@ cv::Mat* ImageHandler::getImage() {
 
 ImageHandler::ImageHandler(const std::string& filename) {
   readImageFromFile(filename);
+}
+
+void ImageHandler::padImage(int padding) {
+  cv::Mat result;
+
+  result.create(image->rows + 2 * padding, image->cols + 2 * padding, image->type());
+  result.setTo(cv::Scalar::all(0));
+
+  image->copyTo(result(cv::Rect(padding, padding, image->cols, image->rows)));
+  //std::swap(image, &result);
+  image = std::make_unique<cv::Mat>(std::move(result));
 }

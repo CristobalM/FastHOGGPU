@@ -12,20 +12,21 @@
 #include "IImageManagerGPU.h"
 #include "runnercuda.h"
 
-__global__ void kConvertMatFromUcharToUchar4(uchar* data, uchar4* result, int step, int channels);
+__global__ void
+kConvertMatFromUcharToUchar3(uchar* data, uchar3* result, int step, int channels, int width, int height);
 
 class ImageManagerGPU : public IImageManagerGPU {
   int cols, rows, channels;
   int step;
-  uchar4* dResult;
-  float4* dImagePaddedF4;
-  uchar4* dImagePaddedU4;
+  uchar3* dResult;
+  float3* dImagePaddedF3;
+  uchar3* dImagePaddedU3;
 
   int padding;
   int paddedWidth, paddedHeight;
 
 public:
-  ImageManagerGPU(cv::Mat& imageBGRA);
+  ImageManagerGPU(cv::Mat& imageBGR);
   ~ImageManagerGPU();
 
   int getCols() override;
@@ -34,16 +35,30 @@ public:
 
   int getChannels() override;
 
-  __host__ void convertMatFromUcharToUchar4(uchar* data, uchar4** dResult,
-  int cols, int rows, int channels, int step);
+  __host__ void convertMatFromUcharToUchar3(uchar* data, uchar3** dResult,
+                                            int cols, int rows, int channels, int step);
 
+  __host__ void convertDResultToFloat3();
 
-  __host__ void ConvertUchar4ToFloat(uchar4* dInputU4, float4* dOutputF4, int width, int height);
-  __host__ void ConvertFloat4ToUchar(float4* dInputF4, uchar4* dOutputU4, int width, int height);
+  __host__ void ConvertUchar3ToFloat(uchar3* dInputU3, float3* dOutputF3, int width, int height);
+  __host__ void ConvertFloat3ToUchar(float3* dInputF3, uchar3* dOutputU3, int width, int height);
 
-  uchar4* getUchar4DeviceImage() override;
+  __host__ void computeGradient(float3* dInputF3, float3* dOutputGradX, float3* dOutputGradY, int width, int height);
 
-  std::unique_ptr<uchar4> getUchar4Image() override;
+  __host__ void computeMagnitudeAndAngles(float3* gradX, float3* gradY, float* magnitude,
+                                                  float* angle, int width, int height);
+
+  uchar3* getUchar3DeviceImage() override;
+
+  std::unique_ptr<float3> getFloat3Image();
+  std::unique_ptr<uchar3> getUchar3Image() override;
+
+  // debug
+
+  void debugGradient() override;
+  void debugGradient2() override;
+
+  int getDetectionHistogramSize() override;
 };
 
 

@@ -19,6 +19,9 @@ public:
   void readImageFromFile(const std::string& filename);
   cv::Mat* getImage();
 
+  void padImage(int padding);
+
+
 };
 
 
