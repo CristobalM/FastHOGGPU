@@ -7,6 +7,9 @@
 
 
 #include <memory>
+#include <vector>
+
+#include "common_structs.h"
 
 #ifndef NVCC
 #ifndef UC3
@@ -30,6 +33,7 @@ public:
 
   // debug
   virtual int getDetectionHistogramSize()= 0;
+  virtual std::vector<ResultSVMScore> detectWithSVM() = 0;
 
 };
 #endif //PROJECT_IIMAGEMANAGERGPU_H

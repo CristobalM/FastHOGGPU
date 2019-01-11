@@ -11,6 +11,7 @@
 
 #include "IImageManagerGPU.h"
 #include "runnercuda.h"
+#include "common_structs.h"
 
 __global__ void
 kConvertMatFromUcharToUchar3(uchar* data, uchar3* result, int step, int channels, int width, int height);
@@ -51,10 +52,18 @@ public:
   __host__ void ComputeBlockHistogram(float* magnitude, float* angle, float* histogram,
                                          int width, int height, int blockSize, int blocksDimX, int blocksDimY, int cellSize, int blockStride);
 
+
+  __host__ void EvalSVM(float* histograms, float* svmScores, float* trainedSVM,
+                int detWindowsDimX, int detWindowsDimY, int winStride, int winSizeX, int winSizeY,
+                int blockDimAllX, int blockDimAllY, int blockSize, int blockStride,
+                int width, int height,
+                float svmBias);
   uchar3* getUchar3DeviceImage() override;
 
   std::unique_ptr<float3> getFloat3Image();
   std::unique_ptr<uchar3> getUchar3Image() override;
+
+  std::vector<ResultSVMScore> detectWithSVM() override;
 
   // debug
 

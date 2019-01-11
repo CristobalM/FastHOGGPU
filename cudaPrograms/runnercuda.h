@@ -14,4 +14,6 @@ using uchar = unsigned char;
 
 std::unique_ptr<ISVMManagerGPU>  loadSVMWeights(float *svmWeights, size_t size);
 std::unique_ptr<IImageManagerGPU> loadImageToGPU(cv::Mat& imageMat);
+
+
 #endif //PROJECT_RUNNER_CUDA_H

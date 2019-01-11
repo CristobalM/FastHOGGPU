@@ -10,7 +10,7 @@ cuda_add_library(HOGCudaLib SHARED
         SVMManagerGPU.cu SVMManagerGPU.cuh ISVMManagerGPU.h
         runnercuda.cu runnercuda.h
         ImageManagerGPU.cu ImageManagerGPU.cuh IImageManagerGPU.h
-        defs.h)
+        defs.h ../SVM/persondetectorwt.tcc common_structs.h)
 target_link_libraries(HOGCudaLib ${CUDA_LIBRARIES} ${OpenCV_LIBS})
 
 cuda_add_library(pruebacuda SHARED testcuda.cu testcuda.h)
