@@ -16,6 +16,8 @@
 
 #include "../cudaPrograms/runnercuda.h"
 
+#include "../SequentialHOG/SequentialHOG.h"
+
 
 bool isImage(const std::string &fname){
   auto i = fname.size();
@@ -82,9 +84,28 @@ int main(int argc, char **argv) {
           (std::chrono::high_resolution_clock::now() - timeStart).count();
 
 
-
+  std::cout << "GPU Performance--------------------------------------------------------------------" << std::endl;
   std::cout << "Image count: " << imageCount << ". Total time: " << totalTime << " ms" << std::endl;
+  std::cout << "-----------------------------------------------------------------------------------" << std::endl << std::endl;
 
+  imageCount = 0;
+  timeStart = std::chrono::high_resolution_clock::now();
+  for (const auto& imgFilename : imgFilenames) {
+    if(!isImage(imgFilename))
+      continue;
+
+    imageCount++;
+    auto readImage = cv::imread(std::string(argv[1]) + "/" + imgFilename, 1);
+    SequentialHOG sequentialHOG(&readImage);
+    auto detections = sequentialHOG.runHOG();
+  }
+  totalTime = (uint)std::chrono::duration_cast<std::chrono::milliseconds>
+          (std::chrono::high_resolution_clock::now() - timeStart).count();
+
+
+  std::cout << "CPU Performance (Sequential)-------------------------------------------------------" << std::endl;
+  std::cout << "Image count: " << imageCount << ". Total time: " << totalTime << " ms" << std::endl;
+  std::cout << "-----------------------------------------------------------------------------------" << std::endl << std::endl;
 
 
 

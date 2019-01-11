@@ -40,6 +40,14 @@ cv::Mat SequentialHOG::downscaleImage(cv::Mat& anImage, double times) {
   assert(times > 0.0);
   auto factor = ( 1.0 / times);
   cv::resize(anImage, result, cv::Size(), factor, factor);
+  for(int i = 0; i < result.rows; i++){
+    for(int j = 0; j < result.cols; j++){
+      auto& color = result.at<cv::Vec3d>(i, j);
+      color[0] = cv::sqrt(color[0]);
+      color[1] = cv::sqrt(color[1]);
+      color[2] = cv::sqrt(color[2]);
+    }
+  }
   return result;
 }
 
@@ -339,8 +347,8 @@ std::vector<Rect> SequentialHOG::runHOG() {
   bool firstDetected = true;
   for(int k = 0; k <= 100; k++) {
     int scale = 1 << k;
-    if(k > 0)
-      tempImage = downscaleImage(paddedImage64F, scale);
+
+    tempImage = downscaleImage(paddedImage64F, scale);
     if(tempImage.rows < 128 || tempImage.cols < 64)
       break;
     for (int i = 0; i + windowY_size <= tempImage.rows; i += windowY_stride) {
@@ -362,90 +370,6 @@ std::vector<Rect> SequentialHOG::runHOG() {
 
 double SequentialHOG::getWeightInterpolated(double pos) {
   return 0;
-}
-
-int main(int argc, char **argv){
-  std::cout << "argc=" << argc << std::endl;
-  if(argc < 2){
-    std::cout << "Falta archivo de imagen!" << std::endl;
-    exit(1);
-  }
-  std::string filename(argv[1]);
-  std::cout << "Filename: " << filename << std::endl;
-  ImageHandler imageHandler(filename);
-  auto *image = imageHandler.getImage();
-  SequentialHOG sequentialHOG(image);
-  auto detections = sequentialHOG.runHOG();
-  std::cout << "detections: " << detections.size() << std::endl;
-
-  for(auto& detection : detections){
-    cv::rectangle(*image, cv::Rect(detection.x, detection.y, detection.width, detection.height), cv::Scalar(0, 0, 255));
-  }
-
-  cv::imshow("detections", *image);
-  cv::waitKey(0);
-  //std::cout << GRADIENT_KERNEL_X << std::endl;
-  //std::cout << GRADIENT_KERNEL_Y << std::endl;
-
-  //auto paddedImage = sequentialHOG.padImage(0);
-  //cv::Mat paddedImage64F;
-  //paddedImage.convertTo(paddedImage64F, CV_64FC4);
-
-  /*
-  cv::Rect firstRect(0, 0, 64, 128);
-  auto detectionWindow0 = paddedImage64F(firstRect);
-  int channels_dw = detectionWindow0.channels();
-  int channels_pi = paddedImage64F.channels();
-
-  auto histograms = sequentialHOG.computeHistograms(detectionWindow0);
-  double dotp = 0;
-  int nans = 0;
-  for(int i = 0; i < histograms.size(); i++){
-    //std::cout << histograms.at<double>(i, 0) << ", ";
-    //dist += (double)std::pow(histogram_result[i] - PERSON_WEIGHT_VEC[i],2);
-
-    if(histograms[i] != histograms[i]){
-      nans++;
-      continue;
-    }
-    dotp += histograms[i]*PERSON_WEIGHT_VEC[i];
-  }
-  std::cout << "Nans count = " << nans << std::endl;
-
-  double val = dotp - PERSON_LINEAR_BIAS;
-
-  std::cout << "val is = " << val << std::endl;
-
-  std::cout << "Is pedestrian? " << std::endl;
-  if(val >= 1)
-    std::cout << "YES" << std::endl;
-  else if(val <= -1)
-    std::cout << "NO" << std::endl;
-  else
-    std::cout << "NOT SURE" << std::endl;
-
-  auto maTest = sequentialHOG.computeGradientMagnitudeAndAngle(paddedImage64F);
-
-
-  //gradX.convertTo(gradX, CV_8UC3);
-  auto &magnitudes = maTest.first;
-  magnitudes.convertTo(magnitudes, CV_8UC3);
-  cv::Mat gradX;
-  cv::filter2D(*image, gradX, -1, GRADIENT_KERNEL_X);
-  std::cout << "image; rows=" << image->rows << ", cols=" << image->cols << std::endl;
-  std::cout << "gradX; rows=" << gradX.rows << ", cols=" << gradX.cols << std::endl;
-  cv::imshow("imagen", gradX);
-  cv::waitKey(0);
-
-
-  cv::imshow("imagen", histograms);
-  cv::imwrite("imagenlinea.png", histograms);
-  for(int i = 0; i < histograms.rows; i++){
-    std::cout << histograms.at<double>(i, 0) << ", ";
-  }
-  std::cout << std::endl;
-  cv::waitKey(0);
-   */
 }
 
 std::vector<double> getGaussianWeights(){

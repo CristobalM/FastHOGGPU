@@ -16,6 +16,7 @@
 #include <math_constants.h>
 
 #include "../SVM/persondetectorwt.tcc"
+#include "../../../../../usr/local/cuda-10.0/include/texture_types.h"
 
 #include <utility>
 
@@ -23,7 +24,7 @@
 const int DETECTION_WINDOW_WIDTH = 64;
 const int DETECTION_WINDOW_HEIGHT = 128;
 const int DETECTION_WINDOW_STRIDE_X = DETECTION_WINDOW_WIDTH/2;
-const int DETECTION_WINDOW_STRIDE_Y = DETECTION_WINDOW_STRIDE_X;
+//const int DETECTION_WINDOW_STRIDE_Y = DETECTION_WINDOW_STRIDE_X;
 const int DETECTION_WINDOW_STRIDE = DETECTION_WINDOW_STRIDE_X;
 
 const int CELL_WIDTH = 8;
@@ -62,7 +63,7 @@ kConvertMatFromUcharToUchar3(uchar* data, uchar3* result, int step, int channels
   };
 }
 
-__global__ void kConvertU3ToFloat(uchar3* dInputU3, float3* dOutputF3, int width, int height){
+__global__ void kConvertU3ToFloat(uchar3* dInputU3, float3* dOutputF3,float4* dOutputF4, int width, int height){
   //int idx = blockDim.x * blockIdx.x + threadIdx.x;
   int idx = threadIdx.x + blockIdx.x*blockDim.x;
 
@@ -71,6 +72,12 @@ __global__ void kConvertU3ToFloat(uchar3* dInputU3, float3* dOutputF3, int width
           .x = (float)pixelU3.x,
           .y = (float)pixelU3.y,
           .z = (float)pixelU3.z
+  };
+  dOutputF4[idx] = {
+          .x = (float)pixelU3.x,
+          .y = (float)pixelU3.y,
+          .z = (float)pixelU3.z,
+          .w = (float)0
   };
 
 }
@@ -433,24 +440,84 @@ __global__ void kEvalSVM(float* histograms, float* svmScores, float* trainedSVM,
   float thisSVMScore = dotProd - svmBias;
   svmScores[idx] = thisSVMScore;
 }
+cudaArray *imageArray = 0;
+texture<float4, 2, cudaReadModeElementType> tex;
+cudaChannelFormatDesc channelDescDownscale;
+bool isAllocated;
+__host__ void InitScale(){
+  channelDescDownscale = cudaCreateChannelDesc<float4>();
+  tex.filterMode = cudaFilterModeLinear;
+  tex.normalized = false;
+  isAllocated = false;
+}
+
+__global__ void kDownscaleImg(float3* outputImg, int widthOutput, int heightOutput, float scale){
+  int idx = threadIdx.x + blockIdx.x*blockDim.x; // idx of detection window
+
+  if(idx >= widthOutput * heightOutput)
+    return;
+
+  int x = idx % widthOutput;
+  int y = idx / widthOutput;
+
+  float u = x * scale;
+  float v = y * scale;
+
+  float4 result = tex2D(tex, u, v);
+  float3 result3;
+
+  result3.x = sqrtf(result.x);
+  result3.y = sqrtf(result.y);
+  result3.z = sqrtf(result.z);
+
+  outputImg[idx] = result3;
+}
+
+__global__ void kApplyGamma(float3* dInputImage, float3* dOutputImage, int width, int height){
+  int idx = threadIdx.x + blockIdx.x*blockDim.x; // idx of detection window
+
+  if(idx >= width * height)
+    return;
+
+
+  dOutputImage[idx].x = sqrtf(dInputImage[idx].x);
+  dOutputImage[idx].y = sqrtf(dInputImage[idx].y);
+  dOutputImage[idx].z = sqrtf(dInputImage[idx].z);
+}
 
 // ImageManagerGPU
 
 ImageManagerGPU::ImageManagerGPU(cv::Mat& imageBGR) {
   auto rows_ = imageBGR.rows;
   auto cols_ = imageBGR.cols;
+
+ blocksInDetWindowDimX = (DETECTION_WINDOW_WIDTH - BLOCK_WIDTH)/CELL_WIDTH + 1;
+ blocksInDetWindowDimY = (DETECTION_WINDOW_HEIGHT - BLOCK_HEIGHT)/CELL_WIDTH + 1;
+ totalBlocksInDetWindow = blocksInDetWindowDimX * blocksInDetWindowDimY;
+ svmVectorSize = totalBlocksInDetWindow * 36;
+
   rows = rows_;
   cols = cols_;
   channels = 3;
   step = cols;
   auto* data = (uchar*)imageBGR.data;
   dResult = nullptr;
+  InitScale();
+
   convertMatFromUcharToUchar3(data, &dResult, cols, rows, channels, step);
 
   paddedWidth = cols;
   paddedHeight = rows;
   dImagePaddedF3 = nullptr;
+  dImagePaddedF4 = nullptr;
   dImagePaddedU3 = nullptr;
+  trainedSVM = nullptr;
+
+  gpuErrchk(cudaMalloc(&trainedSVM, sizeof(float) * svmVectorSize));
+
+  assert(svmVectorSize == PERSON_WEIGHT_VEC_LENGTH);
+  gpuErrchk(cudaMemcpy(trainedSVM, PERSON_WEIGHT_VEC, sizeof(float) * svmVectorSize, cudaMemcpyHostToDevice));
+
 }
 
 
@@ -492,7 +559,8 @@ ImageManagerGPU::~ImageManagerGPU() {
 
   if(dImagePaddedU3 != nullptr)
     gpuErrchk(cudaFree(dImagePaddedU3));
-
+  if(trainedSVM != nullptr)
+    gpuErrchk(cudaFree(trainedSVM));
 }
 
 int ImageManagerGPU::getCols() {
@@ -511,12 +579,12 @@ __host__ inline int ceilDiv(int a, int b){
   return (a % b != 0) ? a/b + 1: a/b;
 }
 
-__host__ void ImageManagerGPU::ConvertUchar3ToFloat(uchar3* dInputU3, float3* dOutputF3, int width, int height) {
+__host__ void ImageManagerGPU::ConvertUchar3ToFloat(uchar3* dInputU3, float3* dOutputF3, float4* dOutputF4, int width, int height) {
   const int threadsByBlock = 32;
   double b = (width*height)/((double)threadsByBlock);
   int b_int = (int)std::ceil(b);
   //std::cout << "ConvertUchar3ToFloat:: blocks = " << b_int << " threadsByBlock = " << threadsByBlock << std::endl;
-  kConvertU3ToFloat <<< b_int, threadsByBlock >>>(dInputU3, dOutputF3, width, height);
+  kConvertU3ToFloat <<< b_int, threadsByBlock >>>(dInputU3, dOutputF3, dOutputF4, width, height);
   gpuErrchk( cudaPeekAtLastError() );
   gpuErrchk( cudaDeviceSynchronize() );
 
@@ -676,6 +744,26 @@ void ImageManagerGPU::debugGradient() {
   cv::imwrite("cvF3image.png", cvF3Image);
   cv::imwrite("cvU3ImageReal.png", cvU3ImageReal);
 
+  float3* dGammaCorrectedImg;
+  std::unique_ptr<float3> hGammaCorrectedImg(new float3[paddedWidth * paddedHeight]);
+  gpuErrchk(cudaMalloc(&dGammaCorrectedImg, sizeof(float3) * paddedWidth * paddedHeight));
+  /*
+  gpuErrchk(cudaMemcpy(dGammaCorrectedImg, dImagePaddedF3, sizeof(float3) * paddedWidth * paddedHeight,
+          cudaMemcpyDeviceToDevice ));
+  */
+  const int threadsByBlock = 32;
+  double b = (paddedWidth*paddedHeight)/((double)threadsByBlock);
+  int b_int = (int)std::ceil(b);
+
+  kApplyGamma<<<b_int, threadsByBlock >>>(dImagePaddedF3, dGammaCorrectedImg, paddedWidth, paddedHeight);
+
+  gpuErrchk(cudaMemcpy(hGammaCorrectedImg.get(), dGammaCorrectedImg, sizeof(float3) * paddedWidth * paddedHeight,
+                       cudaMemcpyDeviceToHost));
+
+  auto cvF3ImageGamma = convertToCVImage<float3, float, cv::Vec3f>(hGammaCorrectedImg.get(), cols, rows, CV_32FC3);
+  cv::imwrite("cvF3ImageGamma.png", cvF3ImageGamma);
+
+
   std::unique_ptr<float3> gradX(new float3[paddedWidth * paddedHeight]);
   std::unique_ptr<float3> gradY(new float3[paddedWidth * paddedHeight]);
 
@@ -695,7 +783,7 @@ void ImageManagerGPU::debugGradient() {
   auto gradYCV = convertToCVImage<float3, float, cv::Vec3f>(gradY.get(), paddedWidth, paddedHeight, CV_32FC3);
   auto sumGrad = cv::Mat(gradXCV + gradYCV);
   cv::imwrite("gradXCV.png", gradXCV);
-  cv::imwrite("gradYCV.png", gradXCV);
+  cv::imwrite("gradYCV.png", gradYCV);
   cv::imwrite("sumGrad.png", sumGrad);
 
   float *dMagnitudes, *dAngles;
@@ -709,7 +797,6 @@ void ImageManagerGPU::debugGradient() {
 
   gpuErrchk(cudaMemcpy(hMagnitudes.get(), dMagnitudes, sizeof(float) * paddedWidth * paddedHeight, cudaMemcpyDeviceToHost));
   gpuErrchk(cudaMemcpy(hAngles.get(), dAngles, sizeof(float) * paddedWidth * paddedHeight, cudaMemcpyDeviceToHost));
-
   auto cvMagnitudes = convertToCVImage1D<float, float, float>(hMagnitudes.get(), paddedWidth, paddedHeight, CV_32F);
   auto cvAngles = convertToCVImage1D<float, float, float>(hAngles.get(), paddedWidth, paddedHeight, CV_32F);
   cv::imwrite("cvMagnitudes.png", cvMagnitudes);
@@ -740,26 +827,23 @@ void ImageManagerGPU::debugGradient() {
     std::cout << hHistograms.get()[i] << "  ";
   std::cout << std::endl;
 
-  int ddebug = DETECTION_WINDOW_STRIDE;
+  //int ddebug = DETECTION_WINDOW_STRIDE;
   const int detWindowsDimX = ((paddedWidth - DETECTION_WINDOW_WIDTH)/DETECTION_WINDOW_STRIDE) + 1;
   const int detWindowsDimY = ((paddedHeight - DETECTION_WINDOW_HEIGHT)/DETECTION_WINDOW_STRIDE) + 1;
 
   const int totalDetectionWindows = detWindowsDimX * detWindowsDimY;
 
-  int blocksInDetWindowDimX = (DETECTION_WINDOW_WIDTH - BLOCK_WIDTH)/CELL_WIDTH + 1;
-  int blocksInDetWindowDimY = (DETECTION_WINDOW_HEIGHT - BLOCK_HEIGHT)/CELL_WIDTH + 1;
-  int totalBlocksInDetWindow = blocksInDetWindowDimX * blocksInDetWindowDimY;
-  int svmVectorSize = totalBlocksInDetWindow * 36;
 
-  float* dSvmScores, *trainedSVM;
+
+  float* dSvmScores;
 
   gpuErrchk(cudaMalloc(&dSvmScores, sizeof(float) * totalDetectionWindows));
-  gpuErrchk(cudaMalloc(&trainedSVM, sizeof(float) * svmVectorSize));
+  //gpuErrchk(cudaMalloc(&trainedSVM, sizeof(float) * svmVectorSize));
 
 
 
-  assert(svmVectorSize == PERSON_WEIGHT_VEC_LENGTH);
-  gpuErrchk(cudaMemcpy(trainedSVM, PERSON_WEIGHT_VEC, sizeof(float) * svmVectorSize, cudaMemcpyHostToDevice));
+  //assert(svmVectorSize == PERSON_WEIGHT_VEC_LENGTH);
+  //gpuErrchk(cudaMemcpy(trainedSVM, PERSON_WEIGHT_VEC, sizeof(float) * svmVectorSize, cudaMemcpyHostToDevice));
 
   EvalSVM(dHistograms, dSvmScores, trainedSVM,
           detWindowsDimX, detWindowsDimY, DETECTION_WINDOW_STRIDE,
@@ -794,7 +878,6 @@ void ImageManagerGPU::debugGradient() {
   gpuErrchk(cudaFree(dAngles));
   gpuErrchk(cudaFree(dHistograms));
   gpuErrchk(cudaFree(dSvmScores));
-  gpuErrchk(cudaFree(trainedSVM));
   cv::waitKey(0);
 
 }
@@ -825,8 +908,10 @@ std::unique_ptr<float3> ImageManagerGPU::getFloat3Image() {
 __host__ void ImageManagerGPU::convertDResultToFloat3() {
   assert(paddedHeight > 0 && paddedWidth > 0);
   gpuErrchk(cudaMalloc((void**)&dImagePaddedF3, sizeof(float3) * paddedHeight * paddedWidth));
+  gpuErrchk(cudaMalloc((void**)&dImagePaddedF4, sizeof(float4) * paddedHeight * paddedWidth));
   assert(dImagePaddedF3 != nullptr);
-  ConvertUchar3ToFloat(dResult, dImagePaddedF3, paddedWidth, paddedHeight);
+  assert(dImagePaddedF4 != nullptr);
+  ConvertUchar3ToFloat(dResult, dImagePaddedF3, dImagePaddedF4, paddedWidth, paddedHeight);
 }
 
 int ImageManagerGPU::getDetectionHistogramSize() {
@@ -854,7 +939,7 @@ ImageManagerGPU::EvalSVM(float* histograms, float* svmScores, float* trainedSVM,
 
   const int threadsByBlock = 32;
   double b = (detWindowsDimX*detWindowsDimY)/((double)threadsByBlock);
-  int b_int = (int)std::ceil(b);
+  int b_int = (int)(std::max<double>(std::ceil(b), 1.0));
 
   kEvalSVM<<< b_int, threadsByBlock>>>(histograms, svmScores, trainedSVM, detWindowsDimX, detWindowsDimY,
           winStride,  winSizeX,  winSizeY,  blockDimAllX,  blockDimAllY,  blockSize,
@@ -865,89 +950,152 @@ ImageManagerGPU::EvalSVM(float* histograms, float* svmScores, float* trainedSVM,
 std::vector<ResultSVMScore> ImageManagerGPU::detectWithSVM() {
   std::vector<ResultSVMScore> results;
 
+
+  //int blocksInDetWindowDimX = (DETECTION_WINDOW_WIDTH - BLOCK_WIDTH)/CELL_WIDTH + 1;
+  //int blocksInDetWindowDimY = (DETECTION_WINDOW_HEIGHT - BLOCK_HEIGHT)/CELL_WIDTH + 1;
+  //int totalBlocksInDetWindow = blocksInDetWindowDimX * blocksInDetWindowDimY;
+  //int svmVectorSize = totalBlocksInDetWindow * 36;
+
   if(dImagePaddedF3 == nullptr)
     convertDResultToFloat3();
 
+  float3* dCurrentImage = dImagePaddedF3;
+  int currentHeight = paddedHeight;
+  int currentWidth = paddedWidth;
 
-  float3 *dGradX, *dGradY;
+  for(int invScale = 1; invScale < 10; invScale++) {
+    float3* dOutputImg;
 
-  size_t f3Bytes = sizeof(float3) * paddedHeight * paddedWidth;
+      //float scale = (float) (1.0 / ((float)(1 << invScale)));
+    float scale = (float) (1 << invScale);
 
-  gpuErrchk(cudaMalloc((void**)&dGradX, f3Bytes));
-  gpuErrchk(cudaMalloc((void**)&dGradY, f3Bytes));
-
-  computeGradient(dImagePaddedF3, dGradX, dGradY, paddedWidth, paddedHeight);
-
-  float *dMagnitudes, *dAngles;
-  gpuErrchk(cudaMalloc(&dMagnitudes, sizeof(float) * paddedHeight * paddedWidth));
-  gpuErrchk(cudaMalloc(&dAngles, sizeof(float) * paddedHeight * paddedWidth));
-
-  computeMagnitudeAndAngles(dGradX, dGradY, dMagnitudes, dAngles, paddedWidth, paddedHeight);
-  gpuErrchk(cudaFree(dGradX));
-  gpuErrchk(cudaFree(dGradY));
-  int blockNum = calcContainedWithStride(paddedWidth, paddedHeight, BLOCK_WIDTH, BLOCK_HEIGHT, CELL_WIDTH, CELL_HEIGHT);
-  int allHistogramsSize = 36 * blockNum;
-  float* dHistograms;
-
-  const int blocksDimX = ((paddedWidth - BLOCK_WIDTH)/CELL_WIDTH) + 1;
-  const int blocksDimY = ((paddedHeight - BLOCK_HEIGHT)/CELL_HEIGHT) + 1;
+    int widthOutput = (int) std::ceil(paddedWidth / scale);
+    int heightOutput = (int) std::ceil(paddedHeight / scale);
 
 
-  gpuErrchk(cudaMalloc(&dHistograms, sizeof(float) * allHistogramsSize));
+    const int detWindowsDimX = ((widthOutput - DETECTION_WINDOW_WIDTH)/DETECTION_WINDOW_STRIDE) + 1;
+    const int detWindowsDimY = ((heightOutput - DETECTION_WINDOW_HEIGHT)/DETECTION_WINDOW_STRIDE) + 1;
 
-  ComputeBlockHistogram(dMagnitudes, dAngles, dHistograms, paddedWidth, paddedHeight,
-                        BLOCK_WIDTH, blocksDimX, blocksDimY, CELL_WIDTH, CELL_WIDTH);
-  gpuErrchk(cudaFree(dMagnitudes));
-  gpuErrchk(cudaFree(dAngles));
+    const int totalDetectionWindows = detWindowsDimX * detWindowsDimY;
 
-
-
-  const int detWindowsDimX = ((paddedWidth - DETECTION_WINDOW_WIDTH)/DETECTION_WINDOW_STRIDE) + 1;
-  const int detWindowsDimY = ((paddedHeight - DETECTION_WINDOW_HEIGHT)/DETECTION_WINDOW_STRIDE) + 1;
-
-  const int totalDetectionWindows = detWindowsDimX * detWindowsDimY;
-
-  int blocksInDetWindowDimX = (DETECTION_WINDOW_WIDTH - BLOCK_WIDTH)/CELL_WIDTH + 1;
-  int blocksInDetWindowDimY = (DETECTION_WINDOW_HEIGHT - BLOCK_HEIGHT)/CELL_WIDTH + 1;
-  int totalBlocksInDetWindow = blocksInDetWindowDimX * blocksInDetWindowDimY;
-  int svmVectorSize = totalBlocksInDetWindow * 36;
-
-  float* dSvmScores, *trainedSVM;
-
-  gpuErrchk(cudaMalloc(&dSvmScores, sizeof(float) * totalDetectionWindows));
-  gpuErrchk(cudaMalloc(&trainedSVM, sizeof(float) * svmVectorSize));
-
-  assert(svmVectorSize == PERSON_WEIGHT_VEC_LENGTH);
-  gpuErrchk(cudaMemcpy(trainedSVM, PERSON_WEIGHT_VEC, sizeof(float) * svmVectorSize, cudaMemcpyHostToDevice));
-
-  EvalSVM(dHistograms, dSvmScores, trainedSVM,
-          detWindowsDimX, detWindowsDimY, DETECTION_WINDOW_STRIDE,
-          DETECTION_WINDOW_WIDTH, DETECTION_WINDOW_HEIGHT,
-          blocksDimX, blocksDimY, BLOCK_WIDTH, CELL_WIDTH,
-          paddedWidth, paddedHeight, PERSON_LINEAR_BIAS);
-  gpuErrchk(cudaFree(trainedSVM));
-  gpuErrchk(cudaFree(dHistograms));
+    if(widthOutput <= DETECTION_WINDOW_WIDTH+5 || heightOutput <= DETECTION_WINDOW_WIDTH+5)
+      break;
 
 
-  std::unique_ptr<float> svmScores(new float[totalDetectionWindows]);
+    gpuErrchk(cudaMalloc(&dOutputImg, sizeof(float3) * widthOutput * heightOutput));
 
-  gpuErrchk(cudaMemcpy(svmScores.get(), dSvmScores, sizeof(float) * totalDetectionWindows, cudaMemcpyDeviceToHost));
-  gpuErrchk(cudaFree(dSvmScores));
+    DownscaleImg(dImagePaddedF4, dOutputImg, paddedWidth, paddedHeight,
+                 widthOutput, heightOutput, scale);
 
-  for(int i = 0; i < totalDetectionWindows; i++){
-    float currentScore = svmScores.get()[i];
-    if(currentScore >= 1.0){
-      auto winCoordinates = getWindowCoordinates(i, DETECTION_WINDOW_STRIDE, DETECTION_WINDOW_STRIDE, detWindowsDimX);
-      ResultSVMScore resultSVMScore = {
-              .svmScore = currentScore,
-              .x = winCoordinates.first,
-              .y = winCoordinates.second,
-              .width = DETECTION_WINDOW_WIDTH,
-              .height = DETECTION_WINDOW_HEIGHT,
-      };
-      results.push_back(resultSVMScore);
+    currentHeight = heightOutput;
+    currentWidth = widthOutput;
+    dCurrentImage = dOutputImg;
+
+
+    gpuErrchk(cudaPeekAtLastError());
+    gpuErrchk(cudaDeviceSynchronize());
+
+
+
+    float3* dGradX, * dGradY;
+
+    size_t f3Bytes = sizeof(float3) * currentHeight * currentWidth;
+
+    gpuErrchk(cudaMalloc((void**) &dGradX, f3Bytes));
+    gpuErrchk(cudaMalloc((void**) &dGradY, f3Bytes));
+
+    computeGradient(dCurrentImage, dGradX, dGradY, currentWidth, currentHeight);
+
+    float* dMagnitudes, * dAngles;
+    gpuErrchk(cudaMalloc(&dMagnitudes, sizeof(float) * currentHeight * currentWidth));
+    gpuErrchk(cudaMalloc(&dAngles, sizeof(float) * currentHeight * currentWidth));
+
+    computeMagnitudeAndAngles(dGradX, dGradY, dMagnitudes, dAngles, currentWidth, currentHeight);
+    gpuErrchk(cudaFree(dGradX));
+    gpuErrchk(cudaFree(dGradY));
+    int blockNum = calcContainedWithStride(currentWidth, currentHeight, BLOCK_WIDTH, BLOCK_HEIGHT, CELL_WIDTH,
+                                           CELL_HEIGHT);
+    int allHistogramsSize = 36 * blockNum;
+    float* dHistograms;
+
+    const int blocksDimX = ((currentWidth - BLOCK_WIDTH) / CELL_WIDTH) + 1;
+    const int blocksDimY = ((currentHeight - BLOCK_HEIGHT) / CELL_HEIGHT) + 1;
+
+
+    gpuErrchk(cudaMalloc(&dHistograms, sizeof(float) * allHistogramsSize));
+
+    ComputeBlockHistogram(dMagnitudes, dAngles, dHistograms, currentWidth, currentHeight,
+                          BLOCK_WIDTH, blocksDimX, blocksDimY, CELL_WIDTH, CELL_WIDTH);
+    gpuErrchk(cudaFree(dMagnitudes));
+    gpuErrchk(cudaFree(dAngles));
+
+
+    float* dSvmScores;//, * trainedSVM;
+
+    gpuErrchk(cudaMalloc(&dSvmScores, sizeof(float) * totalDetectionWindows));
+    //gpuErrchk(cudaMalloc(&trainedSVM, sizeof(float) * svmVectorSize));
+
+    //assert(svmVectorSize == PERSON_WEIGHT_VEC_LENGTH);
+    //gpuErrchk(cudaMemcpy(trainedSVM, PERSON_WEIGHT_VEC, sizeof(float) * svmVectorSize, cudaMemcpyHostToDevice));
+
+    EvalSVM(dHistograms, dSvmScores, trainedSVM,
+            detWindowsDimX, detWindowsDimY, DETECTION_WINDOW_STRIDE,
+            DETECTION_WINDOW_WIDTH, DETECTION_WINDOW_HEIGHT,
+            blocksDimX, blocksDimY, BLOCK_WIDTH, CELL_WIDTH,
+            currentWidth, currentHeight, PERSON_LINEAR_BIAS);
+    gpuErrchk(cudaFree(dHistograms));
+
+
+    std::unique_ptr<float> svmScores(new float[totalDetectionWindows]);
+
+    gpuErrchk(cudaMemcpy(svmScores.get(), dSvmScores, sizeof(float) * totalDetectionWindows, cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaFree(dSvmScores));
+
+    for (int i = 0; i < totalDetectionWindows; i++) {
+      float currentScore = svmScores.get()[i];
+      if (currentScore >= 1.0) {
+        auto winCoordinates = getWindowCoordinates(i, DETECTION_WINDOW_STRIDE, DETECTION_WINDOW_STRIDE, detWindowsDimX);
+        ResultSVMScore resultSVMScore = {
+                .svmScore = currentScore,
+                .x = (int)(winCoordinates.first*scale),
+                .y = (int)(winCoordinates.second*scale),
+                .width = (int)(DETECTION_WINDOW_WIDTH*scale),
+                .height = (int)(DETECTION_WINDOW_HEIGHT*scale),
+        };
+        results.push_back(resultSVMScore);
+      }
     }
+
+    //std::cout << "invscale=" << invScale << std::endl;
+
+    gpuErrchk(cudaFree(dOutputImg));
+
   }
   return results;
 }
 
+__host__ void ImageManagerGPU::DownscaleImg(float4* dInputImg, float3* dOutputImg, int width, int height,
+                                            int widthOutput, int heightOutput, float scale){
+  const int threadsByBlock = 32;
+  double b = (widthOutput*heightOutput)/((double)threadsByBlock);
+  int b_int = (int)std::ceil(b);
+
+  //int widthOutput = iDivUp(width, scale);
+  //int heightOutput = iDivUp(height, scale);
+  
+  if(isAllocated){
+    gpuErrchk(cudaFreeArray(imageArray));
+  }
+
+  gpuErrchk(cudaMallocArray(&imageArray, &channelDescDownscale, width, height));
+  gpuErrchk(cudaMemcpyToArray(imageArray, 0, 0, dInputImg, sizeof(float4) * width * height, cudaMemcpyDeviceToDevice));
+
+  isAllocated = true;
+
+  gpuErrchk(cudaBindTextureToArray(tex, imageArray, channelDescDownscale));
+
+  kDownscaleImg<<< b_int, threadsByBlock >>>(dOutputImg, widthOutput, heightOutput, scale);
+
+  gpuErrchk(cudaFreeArray(imageArray));
+  isAllocated = false;
+}
